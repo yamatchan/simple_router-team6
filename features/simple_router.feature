@@ -16,6 +16,7 @@ Feature: Simple router
       link '0x1', 'host1'
       link '0x1', 'host2'
       """
+    And I use OpenFlow 1.3
     And I trema run "lib/simple_router.rb" interactively with the configuration "trema.conf"
     And I run `sleep 10`
     When I run `bundle exec trema netns host1` interactively

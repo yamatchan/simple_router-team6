@@ -1,6 +1,7 @@
 source 'https://rubygems.org'
 
 gem 'trema'
+gem 'pio', github: 'trema/pio', branch: 'develop'
 
 group :development, :test do
   gem 'aruba', require: false

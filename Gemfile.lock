@@ -1,3 +1,11 @@
+GIT
+  remote: git://github.com/trema/pio.git
+  revision: b9a713a541267b61084008fb86378c530f461702
+  branch: develop
+  specs:
+    pio (0.28.1)
+      bindata (~> 2.1.0)
+
 GEM
   remote: https://rubygems.org/
   specs:
@@ -56,8 +64,6 @@ GEM
       gli (~> 2.13.2)
       pio (~> 0.28.1)
       pry (~> 0.10.3)
-    pio (0.28.1)
-      bindata (~> 2.1.0)
     powerpack (0.1.1)
     private_attr (1.1.0)
     procto (0.0.2)
@@ -76,12 +82,12 @@ GEM
       diff-lcs (>= 1.2.0, < 2.0)
       rspec-support (~> 3.3.0)
     rspec-support (3.3.0)
-    rubocop (0.34.2)
+    rubocop (0.35.0)
       astrolabe (~> 1.3)
-      parser (>= 2.2.2.5, < 3.0)
+      parser (>= 2.2.3.0, < 3.0)
       powerpack (~> 0.1)
       rainbow (>= 1.99.1, < 3.0)
-      ruby-progressbar (~> 1.4)
+      ruby-progressbar (~> 1.7)
     ruby-progressbar (1.7.5)
     ruby_parser (3.7.2)
       sexp_processor (~> 4.1)
@@ -111,6 +117,7 @@ DEPENDENCIES
   cucumber
   flay
   flog
+  pio!
   rake
   reek
   rubocop

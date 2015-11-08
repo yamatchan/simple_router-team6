@@ -15,7 +15,14 @@ class SimpleRouter < Trema::Controller
   end
 
   def switch_ready(dpid)
-    send_flow_mod_delete(dpid, match: Match.new)
+    send_flow_mod_add(
+      dpid,
+      table_id: 0,
+      idle_timeout: 0,
+      priority: 1,
+      match: Match.new,
+      instructions: Apply.new(SendOutPort.new(:controller))
+    )
   end
 
   # rubocop:disable MethodLength
@@ -111,11 +118,17 @@ class SimpleRouter < Trema::Controller
 
     arp_entry = @arp_table.lookup(next_hop)
     if arp_entry
-      actions = [SetSourceMacAddress.new(interface.mac_address),
-                 SetDestinationMacAddress.new(arp_entry.mac_address),
-                 SendOutPort.new(interface.port_number)]
-      send_flow_mod_add(dpid, match: ExactMatch.new(message), actions: actions)
-      send_packet_out(dpid, raw_data: message.raw_data, actions: actions)
+      rewrite_mac = [SetSourceMacAddress.new(interface.mac_address),
+                     SetDestinationMacAddress.new(arp_entry.mac_address),
+                     SendOutPort.new(interface.port_number)]
+      arp_match = Match.new(ether_type: message.ether_type,
+                            source_mac_address: message.source_mac,
+                            destination_mac_address: message.destination_mac)
+      send_flow_mod_add(dpid,
+                        priority: 2,
+                        match: arp_match,
+                        instructions: Apply.new(rewrite_mac))
+      send_packet_out(dpid, raw_data: message.raw_data, actions: rewrite_mac)
     else
       send_later(dpid,
                  interface: interface,
