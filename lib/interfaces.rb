@@ -25,6 +25,10 @@ class Interfaces
     end
   end
 
+  def each(&block)
+    @list.each(&block)
+  end
+
   def find_by(queries)
     queries.inject(@list) do |memo, (attr, value)|
       memo.find_all do |interface|

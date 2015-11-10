@@ -14,24 +14,54 @@ class SimpleRouter < Trema::Controller
     logger.info "#{name} started."
   end
 
+  # rubocop:disable MethodLength
+  # rubocop:disable AbcSize
   def switch_ready(dpid)
+    send_flow_mod_delete(dpid, match: Match.new)
+
     send_flow_mod_add(
       dpid,
       table_id: 0,
-      idle_timeout: 0,
       priority: 1,
       match: Match.new,
       instructions: Apply.new(SendOutPort.new(:controller))
     )
-  end
 
-  # rubocop:disable MethodLength
+    @interfaces.each do |each|
+      arp_request_match =
+        Match.new(in_port: each.port_number,
+                  ether_type: EthernetHeader::EtherType::ARP,
+                  arp_operation: Arp::Request::OPERATION,
+                  arp_target_protocol_address: each.ip_address)
+      create_and_send_arp_reply_actions = [
+        NiciraRegMove.new(from: :source_mac_address,
+                          to: :destination_mac_address),
+        SetSourceMacAddress.new(each.mac_address),
+        SetArpOperation.new(Arp::Reply::OPERATION),
+        NiciraRegMove.new(from: :arp_sender_hardware_address,
+                          to: :arp_target_hardware_address),
+        NiciraRegMove.new(from: :arp_sender_protocol_address,
+                          to: :arp_target_protocol_address),
+        SetArpSenderHardwareAddress.new(each.mac_address),
+        SetArpSenderProtocolAddress.new(each.ip_address),
+        SendOutPort.new(:in_port)
+      ]
+      send_flow_mod_add(
+        dpid,
+        table_id: 0,
+        priority: 2,
+        match: arp_request_match,
+        instructions: Apply.new(create_and_send_arp_reply_actions)
+      )
+    end
+  end
+  # rubocop:enable MethodLength
+  # rubocop:enable AbcSize
+
   def packet_in(dpid, message)
     return unless sent_to_router?(message)
 
     case message.data
-    when Arp::Request
-      packet_in_arp_request dpid, message.in_port, message.data
     when Arp::Reply
       packet_in_arp_reply dpid, message
     when Parser::IPv4Packet
@@ -40,25 +70,6 @@ class SimpleRouter < Trema::Controller
       logger.debug "Dropping unsupported packet type: #{message.data.inspect}"
     end
   end
-  # rubocop:enable MethodLength
-
-  # rubocop:disable MethodLength
-  def packet_in_arp_request(dpid, in_port, arp_request)
-    interface =
-      @interfaces.find_by(port_number: in_port,
-                          ip_address: arp_request.target_protocol_address)
-    return unless interface
-    send_packet_out(
-      dpid,
-      raw_data: Arp::Reply.new(
-        destination_mac: arp_request.source_mac,
-        source_mac: interface.mac_address,
-        sender_protocol_address: arp_request.target_protocol_address,
-        target_protocol_address: arp_request.sender_protocol_address
-      ).to_binary,
-      actions: SendOutPort.new(in_port))
-  end
-  # rubocop:enable MethodLength
 
   def packet_in_arp_reply(dpid, message)
     @arp_table.update(message.in_port,
