@@ -2,18 +2,16 @@ require 'arp_table'
 require 'interfaces'
 require 'routing_table'
 
-CLASSIFIER_TABLE_ID = 0
-ARP_RESPONDER_TABLE_ID = 105
-L3_REWRITE_TABLE_ID = 5
-L3_ROUTING_TABLE_ID = 10
-L3_FORWARDING_TABLE_ID = 15
-L2_REWRITE_TABLE_ID = 20
-L2_FWD_TABLE_ID = 25
-
 # Simple implementation of L3 switch in OpenFlow1.0
 # rubocop:disable ClassLength
 class SimpleRouter < Trema::Controller
+  CLASSIFIER_TABLE_ID    = 0
   ARP_RESPONDER_TABLE_ID = 105
+  L3_REWRITE_TABLE_ID    = 5
+  L3_ROUTING_TABLE_ID    = 10
+  L3_FORWARDING_TABLE_ID = 15
+  L2_REWRITE_TABLE_ID    = 20
+  L2_FWD_TABLE_ID        = 25
 
   def start(_args)
     load File.join(__dir__, '..', 'simple_router.conf')
