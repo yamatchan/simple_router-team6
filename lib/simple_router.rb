@@ -13,6 +13,9 @@ class SimpleRouter < Trema::Controller
   L2_REWRITE_TABLE_ID    = 20
   L2_FWD_TABLE_ID        = 25
 
+    ETH_IPv4        = 0x0800
+    ETH_ARP         = 0x0806
+
   def start(_args)
     load File.join(__dir__, '..', 'simple_router.conf')
     @interfaces = Interfaces.new(Configuration::INTERFACES)
