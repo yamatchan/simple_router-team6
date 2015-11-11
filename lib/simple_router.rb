@@ -5,6 +5,8 @@ require 'routing_table'
 # Simple implementation of L3 switch in OpenFlow1.0
 # rubocop:disable ClassLength
 class SimpleRouter < Trema::Controller
+  ARP_RESPONDER_TABLE_ID = 105
+
   def start(_args)
     load File.join(__dir__, '..', 'simple_router.conf')
     @interfaces = Interfaces.new(Configuration::INTERFACES)
@@ -171,6 +173,27 @@ class SimpleRouter < Trema::Controller
     send_packet_out(dpid,
                     raw_data: arp_request.to_binary,
                     actions: SendOutPort.new(interface.port_number))
+  end
+
+  # create add_arp_request_flow_entry by yamada
+  def add_arp_request_flow_entry(dpid, message)
+    send_flow_mod_add(
+      dpid,
+      table_id: ARP_RESPONDER_TABLE_ID,
+      match: Match.new(
+        message
+      ),
+      instructions: [
+        SetArpOperation.new(Arp::Reply::OPERATION),
+        SetArpSenderHardwareAddress.new(interface.mac_address),
+        SetArpSenderProtocolAddress.new(interface.ip_address),
+        SetSourceMacAddress.new(interface.mac_address),      
+        NiciraRegMove.new(
+          from: :source_mac_address, 
+          to: :destination_mac_address
+        ),
+      ]
+    )
   end
 end
 # rubocop:enable ClassLength
