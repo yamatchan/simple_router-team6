@@ -23,9 +23,9 @@ class SimpleRouter < Trema::Controller
   end
 
   def switch_ready(dpid)
-    add_arp_request_flow_entry dpid
-    add_arp_reply_flow_entry dpid
+    add_arppacket_flow_entry dpid
     add_ipv4packet_rewrite_flow_entry dpid
+    add_other_flow_entry dpid
     #send_flow_mod_delete(dpid, match: Match.new)
   end
 
@@ -52,7 +52,7 @@ class SimpleRouter < Trema::Controller
     )
   end
 
-  def add_arp_reply_flow_entry(datapath_id)
+  def add_other_flow_entry(datapath_id)
     send_flow_mod_add(
       datapath_id,
       table_id: CLASSIFIER_TABLE_ID,
