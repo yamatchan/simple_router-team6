@@ -47,7 +47,7 @@ class SimpleRouter < Trema::Controller
       idle_timeout: 0,
       priority: 1,
       match: Match.new(ether_type: ETH_ARP
-                       ether_destination_address:'FF:FF:FF:FF:FF:FF'),#broadcast
+                       ether_destination_address:'ff:ff:ff:ff:ff:ff'),#broadcast
       instructions: GotoTable.new(ARP_RESPONDER_TABLE_ID)
     )
   end
