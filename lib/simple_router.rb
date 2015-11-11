@@ -2,6 +2,14 @@ require 'arp_table'
 require 'interfaces'
 require 'routing_table'
 
+CLASSIFIER_TABLE_ID = 0
+ARP_RESPONDER_TABLE_ID = 105
+L3_REWRITE_TABLE_ID = 5
+L3_ROUTING_TABLE_ID = 10
+L3_FORWARDING_TABLE_ID = 15
+L2_REWRITE_TABLE_ID = 20
+L2_FWD_TABLE_ID = 25
+
 # Simple implementation of L3 switch in OpenFlow1.0
 # rubocop:disable ClassLength
 class SimpleRouter < Trema::Controller
@@ -17,8 +25,46 @@ class SimpleRouter < Trema::Controller
   end
 
   def switch_ready(dpid)
-    send_flow_mod_delete(dpid, match: Match.new)
+    add_arppacket_flow_entry dpid
+    add_ipv4packet_rewrite_flow_entry dpid
+    add_other_flow_entry dpid
+    #send_flow_mod_delete(dpid, match: Match.new)
   end
+
+  def add_ipv4packet_rewrite_flow_entry(datapath_id)
+    send_flow_mod_add(
+      datapath_id,
+      table_id: CLASSIFIER_TABLE_ID,
+      idle_timeout: 0,
+      priority: 1,
+      match: Match.new(ether_type: ETH_IPv4
+                       ether_destination_address: message.source_mac),
+      instructions: GotoTable.new(L3_REWRITE_TABLE_ID)
+    )
+  end
+
+  def add_arppacket_flow_entry(datapath_id)
+    send_flow_mod_add(
+      datapath_id,
+      table_id: CLASSIFIER_TABLE_ID,
+      idle_timeout: 0,
+      priority: 2,
+      match: Match.new(ether_type: ETH_ARP),
+      instructions: GotoTable.new(ARP_RESPONDER_TABLE_ID)
+    )
+  end
+
+  def add_other_flow_entry(datapath_id)
+    send_flow_mod_add(
+      datapath_id,
+      table_id: CLASSIFIER_TABLE_ID,
+      idle_timeout: 0,
+      priority: 0,
+      match: Match.new,
+      instructions: GotoTable.new(L2_REWRITE_TABLE_ID)
+    )
+  end
+
 
   # rubocop:disable MethodLength
   def packet_in(dpid, message)
@@ -35,7 +81,7 @@ class SimpleRouter < Trema::Controller
       logger.debug "Dropping unsupported packet type: #{message.data.inspect}"
     end
   end
-  # rubocop:enable MethodLength
+  # rubocop:enable MethodLength 
 
   # rubocop:disable MethodLength
   def packet_in_arp_request(dpid, in_port, arp_request)
