@@ -74,7 +74,9 @@ class SimpleRouter < Trema::Controller
       add_arp_request_flow_entry(dpid, message)
       # add_l2_rewrite_flow_entry(dpid, message)
       add_l2_forward_flow_entry(dpid, message)
-      #packet_in_arp_request dpid, message.in_port, message.data
+
+      # ARP Requestを処理するで
+      packet_out_of_arp_request dpid, message.in_port, message.data
     when Arp::Reply
       packet_in_arp_reply dpid, message
     when Parser::IPv4Packet
@@ -86,7 +88,7 @@ class SimpleRouter < Trema::Controller
   # rubocop:enable MethodLength 
 
   # rubocop:disable MethodLength
-  def packet_in_arp_request(dpid, in_port, arp_request)
+  def packet_out_of_arp_request(dpid, in_port, arp_request)
     interface =
       @interfaces.find_by(port_number: in_port,
                           ip_address: arp_request.target_protocol_address)
