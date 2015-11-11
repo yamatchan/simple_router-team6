@@ -34,20 +34,20 @@ class SimpleRouter < Trema::Controller
       datapath_id,
       table_id: CLASSIFIER_TABLE_ID,
       idle_timeout: 0,
-      priority: 2,
-      match: Match.new(ether_type: ETH_IPv4),
+      priority: 1,
+      match: Match.new(ether_type: ETH_IPv4
+                       ether_destination_address: message.source_mac),
       instructions: GotoTable.new(L3_REWRITE_TABLE_ID)
     )
   end
 
-  def add_arp_request_flow_entry(datapath_id)
+  def add_arppacket_flow_entry(datapath_id)
     send_flow_mod_add(
       datapath_id,
       table_id: CLASSIFIER_TABLE_ID,
       idle_timeout: 0,
-      priority: 1,
-      match: Match.new(ether_type: ETH_ARP
-                       ether_destination_address:'ff:ff:ff:ff:ff:ff'),#broadcast
+      priority: 2,
+      match: Match.new(ether_type: ETH_ARP),
       instructions: GotoTable.new(ARP_RESPONDER_TABLE_ID)
     )
   end
