@@ -26,6 +26,7 @@ class SimpleRouter < Trema::Controller
     add_arppacket_flow_entry dpid
     add_ipv4packet_rewrite_flow_entry dpid
     add_other_flow_entry dpid
+    add_l2_rewrite_flow_entry(dpid, message)
     #send_flow_mod_delete(dpid, match: Match.new)
   end
 
@@ -70,7 +71,10 @@ class SimpleRouter < Trema::Controller
 
     case message.data
     when Arp::Request
-      packet_in_arp_request dpid, message.in_port, message.data
+      add_arp_request_flow_entry(dpid, message)
+      # add_l2_rewrite_flow_entry(dpid, message)
+      add_l2_forward_flow_entry(dpid, message)
+      #packet_in_arp_request dpid, message.in_port, message.data
     when Arp::Reply
       packet_in_arp_reply dpid, message
     when Parser::IPv4Packet
