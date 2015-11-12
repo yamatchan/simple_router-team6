@@ -39,7 +39,7 @@ class SimpleRouter < Trema::Controller
       table_id: CLASSIFIER_TABLE_ID,
       idle_timeout: 0,
       priority: 1,
-      match: Match.new(ether_type: ETH_IPv4
+      match: Match.new(ether_type: ETH_IPv4,
                        ether_destination_address: message.source_mac),
       instructions: GotoTable.new(L3_REWRITE_TABLE_ID)
     )
