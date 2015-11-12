@@ -27,9 +27,10 @@ class SimpleRouter < Trema::Controller
 
   def switch_ready(dpid)
     add_arppacket_flow_entry dpid
-    add_ipv4packet_rewrite_flow_entry dpid
+    # ipv4のフローエントリは今週の課題では必要ないので、とりあえずコメントアウトしておきます by yamatchan
+    #add_ipv4packet_rewrite_flow_entry dpid
     add_other_flow_entry dpid
-    add_l2_rewrite_flow_entry(dpid, message)
+    add_l2_rewrite_flow_entry(dpid)
     #send_flow_mod_delete(dpid, match: Match.new)
   end
 
@@ -228,7 +229,7 @@ class SimpleRouter < Trema::Controller
                     actions: SendOutPort.new(interface.port_number))
   end
 
-  # create add_arp_request_flow_entry by yamada
+  # create add_arp_request_flow_entry by yamatchan
   def add_arp_request_flow_entry(dpid, message)
     send_flow_mod_add(
       dpid,
@@ -247,6 +248,16 @@ class SimpleRouter < Trema::Controller
         ),
       ]
     )
+  end
+
+  # by yamatchan
+  def add_l2_forward_flow_entry(dpid, message)
+
+  end
+
+  # by yamatchan
+  def add_l2_rewrite_flow_entry(dpid)
+
   end
 end
 # rubocop:enable ClassLength
