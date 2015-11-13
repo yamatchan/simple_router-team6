@@ -27,14 +27,27 @@ class SimpleRouter < Trema::Controller
   end
 
   def switch_ready(dpid)
+    send_flow_mod_delete(dpid, match: Match.new)
+
+    # init classifier table
     add_arppacket_flow_entry dpid
     add_ipv4packet_rewrite_flow_entry dpid
     add_other_flow_entry dpid
-    init_l2_rewrite_flow_entry(dpid)
-    #send_flow_mod_delete(dpid, match: Match.new)
+=begin
+    send_flow_mod_add(
+      dpid,
+      table_id: CLASSIFIER_TABLE_ID,
+      idle_timeout: 0,
+      priority: 0,
+      match: Match.new,
+      instructions: Apply.new(SendOutPort.new(:controller)),
+    )
+=end
 
-    # add packet_in rule
+    # initialize flow entry
     init_arp_flow_entry(dpid)
+
+    init_l2_rewrite_flow_entry(dpid)
     init_l2_forwarding_flow_entry(dpid)
 
     init_l3_rewrite_flow_entry(dpid)
@@ -59,7 +72,10 @@ class SimpleRouter < Trema::Controller
       table_id: CLASSIFIER_TABLE_ID,
       idle_timeout: 0,
       priority: 2,
-      match: Match.new(ether_type: ETH_ARP),
+      match: Match.new(
+        ether_type: ETH_ARP,
+        arp_operation: Arp::Request::OPERATION,
+      ),
       instructions: GotoTable.new(ARP_RESPONDER_TABLE_ID)
     )
   end
@@ -88,22 +104,23 @@ class SimpleRouter < Trema::Controller
 
   # rubocop:disable MethodLength
   def packet_in(dpid, message)
+    logger.info "-------------"
     logger.info "call packet_in"
     return unless sent_to_router?(message)
+    logger.info "sent to router"
 
     case message.data
     when Arp::Request
       logger.info "Arp::Request"
       add_arp_request_flow_entry(dpid, message)
-      # add_l2_rewrite_flow_entry(dpid, message)
-#      add_l2_forward_flow_entry(dpid, message)
+      add_l2_forward_flow_entry(dpid, message)
 
       # ARP Requestを処理するで
       packet_out_of_arp_request dpid, message.in_port, message.data
     when Arp::Reply
       logger.info "Arp::Reply"
       packet_in_arp_reply dpid, message
-#      add_l2_forward_flow_entry(dpid, message)
+      add_l2_forward_flow_entry(dpid, message)
     when Parser::IPv4Packet
       logger.info "Arp::Ipv4Packet"
       packet_in_ipv4 dpid, message
@@ -197,7 +214,7 @@ logger.info "interface.port_number: #{interface.port_number}"
       actions = [SetSourceMacAddress.new(interface.mac_address),
                  SetDestinationMacAddress.new(arp_entry.mac_address),
                  SendOutPort.new(interface.port_number)]
-      send_flow_mod_add(dpid, match: ExactMatch.new(message), actions: actions)
+      #send_flow_mod_add(dpid, match: ExactMatch.new(message), actions: Apply.new(actions))
       send_packet_out(dpid, raw_data: message.raw_data, actions: actions)
     else
       logger.info "arp_entry is null"
@@ -248,6 +265,11 @@ logger.info "interface.port_number: #{interface.port_number}"
   end
 
   def send_arp_request(dpid, destination_ip, interface)
+    logger.info "call send_arp_request"
+    logger.info "source_mac: #{interface.mac_address}"
+    logger.info "sender_protocol_address: #{interface.ip_address}"
+    logger.info "target_protocol_address: #{destination_ip}"
+    logger.info "SendOutPort: #{interface.port_number}"
     arp_request =
       Arp::Request.new(source_mac: interface.mac_address,
                        sender_protocol_address: interface.ip_address,
@@ -270,7 +292,8 @@ logger.info "interface.port_number: #{interface.port_number}"
       priority: 1,
       match: Match.new(
         ether_type: ETH_ARP,
-        target_protocol_address: interface.ip_address,
+        arp_operation: Arp::Request::OPERATION,
+        arp_target_protocol_address: interface.ip_address,
       ),
       instructions: Apply.new( [
           NiciraRegMove.new(
@@ -280,7 +303,6 @@ logger.info "interface.port_number: #{interface.port_number}"
           SetArpOperation.new(Arp::Reply::OPERATION),
           SetArpSenderHardwareAddress.new(interface.mac_address),
           SetArpSenderProtocolAddress.new(message.data.target_protocol_address),
-          SetDestinationMacAddress.new(message.data.source_mac),
           SetSourceMacAddress.new(interface.mac_address),
           #SendOutPort.new(message.in_port),
       ] ),
@@ -314,7 +336,7 @@ logger.info "interface.port_number: #{interface.port_number}"
       idle_timeout: 0,
       priority: 1,
       match: Match.new(
-        dl_dst: message.source_mac,
+        destination_mac_address: message.source_mac,
       ),
       instructions: Apply.new(SendOutPort.new(message.in_port)),
     )
