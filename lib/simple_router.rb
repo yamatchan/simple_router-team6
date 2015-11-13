@@ -30,19 +30,9 @@ class SimpleRouter < Trema::Controller
     send_flow_mod_delete(dpid, match: Match.new)
 
     # init classifier table
-    add_arppacket_flow_entry dpid
-    add_ipv4packet_rewrite_flow_entry dpid
-    add_other_flow_entry dpid
-=begin
-    send_flow_mod_add(
-      dpid,
-      table_id: CLASSIFIER_TABLE_ID,
-      idle_timeout: 0,
-      priority: 0,
-      match: Match.new,
-      instructions: Apply.new(SendOutPort.new(:controller)),
-    )
-=end
+    add_arppacket_flow_entry(dpid)
+    add_ipv4packet_rewrite_flow_entry(dpid)
+    add_other_flow_entry(dpid)
 
     # initialize flow entry
     init_arp_flow_entry(dpid)
@@ -116,14 +106,14 @@ class SimpleRouter < Trema::Controller
       add_l2_forward_flow_entry(dpid, message)
 
       # ARP Requestを処理するで
-      packet_out_of_arp_request dpid, message.in_port, message.data
+      packet_out_of_arp_request(dpid, message.in_port, message.data)
     when Arp::Reply
       logger.info "Arp::Reply"
-      packet_in_arp_reply dpid, message
+      packet_in_arp_reply(dpid, message)
       add_l2_forward_flow_entry(dpid, message)
     when Parser::IPv4Packet
       logger.info "Arp::Ipv4Packet"
-      packet_in_ipv4 dpid, message
+      packet_in_ipv4(dpid, message)
     else
       logger.info "Dropping unsupported packet type: #{message.data.inspect}"
     end
@@ -206,7 +196,8 @@ class SimpleRouter < Trema::Controller
     logger.info "#{next_hop}"
     interface = @interfaces.find_by_prefix(next_hop)
     return if !interface || (interface.port_number == message.in_port)
-logger.info "interface.port_number: #{interface.port_number}"
+
+    logger.info "interface.port_number: #{interface.port_number}"
     logger.info "pass interface"
     arp_entry = @arp_table.lookup(next_hop)
     if arp_entry
@@ -304,7 +295,6 @@ logger.info "interface.port_number: #{interface.port_number}"
           SetArpSenderHardwareAddress.new(interface.mac_address),
           SetArpSenderProtocolAddress.new(message.data.target_protocol_address),
           SetSourceMacAddress.new(interface.mac_address),
-          #SendOutPort.new(message.in_port),
       ] ),
     )
 =begin
@@ -397,7 +387,6 @@ logger.info "interface.port_number: #{interface.port_number}"
       instructions: GotoTable.new(L2_REWRITE_TABLE_ID),
     )
   end
-
 
   def add_l3_rewrite_flow_entry(dpid, message)
 
