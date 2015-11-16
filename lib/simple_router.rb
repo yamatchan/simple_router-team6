@@ -106,7 +106,7 @@ class SimpleRouter < Trema::Controller
       add_l2_forward_flow_entry(dpid, message)
 
       # ARP Requestを処理するで
-      packet_out_of_arp_request(dpid, message.in_port, message.data)
+      # packet_out_of_arp_request(dpid, message.in_port, message.data)
     when Arp::Reply
       logger.info "Arp::Reply"
       packet_in_arp_reply(dpid, message)
@@ -286,35 +286,53 @@ class SimpleRouter < Trema::Controller
         arp_operation: Arp::Request::OPERATION,
         arp_target_protocol_address: interface.ip_address,
       ),
-      instructions: Apply.new( [
+      instructions: [
+        Apply.new( [
           NiciraRegMove.new(
-            from: :source_mac_address, 
+            from: :source_mac_address,
             to: :destination_mac_address
           ),
+          NiciraRegMove.new(
+            from: :arp_sender_protocol_address,
+            to: :arp_target_protocol_address
+          ),
+          NiciraRegMove.new(
+            from: :arp_sender_hardware_address,
+            to: :arp_target_hardware_address
+          ),
           SetArpOperation.new(Arp::Reply::OPERATION),
+          #NiciraRegLoad.new(:arp_operation, Arp::Reply::OPERATION),
           SetArpSenderHardwareAddress.new(interface.mac_address),
-          SetArpSenderProtocolAddress.new(message.data.target_protocol_address),
+          SetArpSenderProtocolAddress.new(interface.ip_address),
           SetSourceMacAddress.new(interface.mac_address),
-      ] ),
+        ] ),
+        GotoTable.new(L2_REWRITE_TABLE_ID),
+      ],
     )
-=begin
+
     send_packet_out(
       dpid,
       packet_in: message,
       actions: [
-          NiciraRegMove.new(
-            from: :source_mac_address, 
-            to: :destination_mac_address
-          ),
-          SetArpOperation.new(Arp::Reply::OPERATION),
-          SetArpSenderHardwareAddress.new(interface.mac_address),
-          SetArpSenderProtocolAddress.new(message.data.target_protocol_address),
-          SetDestinationMacAddress.new(message.data.source_mac),
-          SetSourceMacAddress.new(interface.mac_address),
-          SendOutPort.new(message.in_port),
-        ]
+        NiciraRegMove.new(
+          from: :source_mac_address,
+          to: :destination_mac_address
+        ),
+        NiciraRegMove.new(
+          from: :arp_sender_protocol_address,
+          to: :arp_target_protocol_address
+        ),
+        NiciraRegMove.new(
+          from: :arp_sender_hardware_address,
+          to: :arp_target_hardware_address
+        ),
+        SetArpOperation.new(Arp::Reply::OPERATION),
+        SetArpSenderHardwareAddress.new(interface.mac_address),
+        SetArpSenderProtocolAddress.new(interface.ip_address),
+        SetSourceMacAddress.new(interface.mac_address),
+        SendOutPort.new(message.in_port),
+      ]
     )
-=end
   end
 
   # by yamatchan
