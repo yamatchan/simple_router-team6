@@ -45,53 +45,6 @@ class SimpleRouter < Trema::Controller
     init_l3_forwarding_flow_entry(dpid)
   end
 
-  def add_ipv4packet_rewrite_flow_entry(datapath_id)
-    send_flow_mod_add(
-      datapath_id,
-      table_id: CLASSIFIER_TABLE_ID,
-      idle_timeout: 0,
-      priority: 1,
-      match: Match.new(ether_type: ETH_IPv4),
-      instructions: GotoTable.new(L3_REWRITE_TABLE_ID)
-    )
-  end
-
-  def add_arppacket_flow_entry(datapath_id)
-    send_flow_mod_add(
-      datapath_id,
-      table_id: CLASSIFIER_TABLE_ID,
-      idle_timeout: 0,
-      priority: 2,
-      match: Match.new(
-        ether_type: ETH_ARP,
-        arp_operation: Arp::Request::OPERATION,
-      ),
-      instructions: GotoTable.new(ARP_RESPONDER_TABLE_ID)
-    )
-  end
-
-  def add_other_flow_entry(datapath_id)
-    send_flow_mod_add(
-      datapath_id,
-      table_id: CLASSIFIER_TABLE_ID,
-      idle_timeout: 0,
-      priority: 0,
-      match: Match.new,
-      instructions: GotoTable.new(L2_REWRITE_TABLE_ID)
-    )
-  end
-
-  def init_arp_flow_entry(dpid)
-    send_flow_mod_add(
-      dpid,
-      table_id: ARP_RESPONDER_TABLE_ID,
-      idle_timeout: 0,
-      priority: 0,
-      match: Match.new,
-      instructions: GotoTable.new(L2_REWRITE_TABLE_ID),
-    )
-  end
-
   # rubocop:disable MethodLength
   def packet_in(dpid, message)
     logger.info "-------------"
@@ -104,9 +57,6 @@ class SimpleRouter < Trema::Controller
       logger.info "Arp::Request"
       add_arp_request_flow_entry(dpid, message)
       add_l2_forward_flow_entry(dpid, message)
-
-      # ARP Requestを処理するで
-      # packet_out_of_arp_request(dpid, message.in_port, message.data)
     when Arp::Reply
       logger.info "Arp::Reply"
       packet_in_arp_reply(dpid, message)
@@ -119,24 +69,6 @@ class SimpleRouter < Trema::Controller
     end
   end
   # rubocop:enable MethodLength 
-
-  # rubocop:disable MethodLength
-  def packet_out_of_arp_request(dpid, in_port, arp_request)
-    interface =
-      @interfaces.find_by(port_number: in_port,
-                          ip_address: arp_request.target_protocol_address)
-    return unless interface
-    send_packet_out(
-      dpid,
-      raw_data: Arp::Reply.new(
-        destination_mac: arp_request.source_mac,
-        source_mac: interface.mac_address,
-        sender_protocol_address: arp_request.target_protocol_address,
-        target_protocol_address: arp_request.sender_protocol_address
-      ).to_binary,
-      actions: SendOutPort.new(in_port))
-  end
-  # rubocop:enable MethodLength
 
   def packet_in_arp_reply(dpid, message)
     @arp_table.update(message.in_port,
@@ -277,6 +209,29 @@ class SimpleRouter < Trema::Controller
                           ip_address: message.data.target_protocol_address)
     return unless interface
 
+    # send_flow_mod_add と send_packet_out で使うからまとめとくで
+    instractions = [
+      NiciraRegMove.new(
+        from: :source_mac_address,
+        to: :destination_mac_address
+      ),
+      NiciraRegMove.new(
+        from: :arp_sender_protocol_address,
+        to: :arp_target_protocol_address
+      ),
+      NiciraRegMove.new(
+        from: :arp_sender_hardware_address,
+        to: :arp_target_hardware_address
+      ),
+      SetArpOperation.new(Arp::Reply::OPERATION),
+      #NiciraRegLoad.new(:arp_operation, Arp::Reply::OPERATION),
+      SetArpSenderHardwareAddress.new(interface.mac_address),
+      SetArpSenderProtocolAddress.new(message.data.target_protocol_address),
+      SetSourceMacAddress.new(interface.mac_address),
+      SendOutPort.new((671.to_s(36)+"_"+1198505.to_s(36)).to_sym),
+      #SetEthSrcAddr.new(interface.mac_address),
+    ]
+
     send_flow_mod_add(
       dpid,
       table_id: ARP_RESPONDER_TABLE_ID,
@@ -287,52 +242,50 @@ class SimpleRouter < Trema::Controller
         arp_target_protocol_address: interface.ip_address,
       ),
       instructions: [
-        Apply.new( [
-          NiciraRegMove.new(
-            from: :source_mac_address,
-            to: :destination_mac_address
-          ),
-          NiciraRegMove.new(
-            from: :arp_sender_protocol_address,
-            to: :arp_target_protocol_address
-          ),
-          NiciraRegMove.new(
-            from: :arp_sender_hardware_address,
-            to: :arp_target_hardware_address
-          ),
-          SetArpOperation.new(Arp::Reply::OPERATION),
-          #NiciraRegLoad.new(:arp_operation, Arp::Reply::OPERATION),
-          SetArpSenderHardwareAddress.new(interface.mac_address),
-          SetArpSenderProtocolAddress.new(interface.ip_address),
-          SetSourceMacAddress.new(interface.mac_address),
-        ] ),
-        GotoTable.new(L2_REWRITE_TABLE_ID),
+        Apply.new(
+          instractions
+        ),
       ],
     )
 
     send_packet_out(
       dpid,
       packet_in: message,
-      actions: [
-        NiciraRegMove.new(
-          from: :source_mac_address,
-          to: :destination_mac_address
-        ),
-        NiciraRegMove.new(
-          from: :arp_sender_protocol_address,
-          to: :arp_target_protocol_address
-        ),
-        NiciraRegMove.new(
-          from: :arp_sender_hardware_address,
-          to: :arp_target_hardware_address
-        ),
-        SetArpOperation.new(Arp::Reply::OPERATION),
-        SetArpSenderHardwareAddress.new(interface.mac_address),
-        SetArpSenderProtocolAddress.new(interface.ip_address),
-        SetSourceMacAddress.new(interface.mac_address),
-        SendOutPort.new(message.in_port),
-      ]
+      actions: instractions
     )
+  end
+
+  def add_ipv4packet_rewrite_flow_entry(dpid)
+    send_flow_mod_add(
+      dpid,
+      table_id: CLASSIFIER_TABLE_ID,
+      idle_timeout: 0,
+      priority: 1,
+      match: Match.new(ether_type: ETH_IPv4),
+      instructions: GotoTable.new(L3_REWRITE_TABLE_ID)
+    )
+  end
+
+  def add_arppacket_flow_entry(dpid)
+    send_flow_mod_add(
+      dpid,
+      table_id: CLASSIFIER_TABLE_ID,
+      idle_timeout: 0,
+      priority: 2,
+      match: Match.new(
+        ether_type: ETH_ARP,
+        arp_operation: Arp::Request::OPERATION,
+      ),
+      instructions: GotoTable.new(ARP_RESPONDER_TABLE_ID)
+    )
+  end
+
+  def add_other_flow_entry(dpid)
+    add_goto_table_flow_entry(dpid, CLASSIFIER_TABLE_ID, L2_REWRITE_TABLE_ID)
+  end
+
+  def init_arp_flow_entry(dpid)
+    add_goto_table_flow_entry(dpid, ARP_RESPONDER_TABLE_ID, L2_REWRITE_TABLE_ID)
   end
 
   # by yamatchan
@@ -352,14 +305,7 @@ class SimpleRouter < Trema::Controller
 
   # by yamatchan
   def init_l2_rewrite_flow_entry(dpid)
-    send_flow_mod_add(
-      dpid,
-      table_id: L2_REWRITE_TABLE_ID,
-      idle_timeout: 0,
-      priority: 0,
-      match: Match.new,
-      instructions: GotoTable.new(L2_FORWARDING_TABLE_ID),
-    )
+    add_goto_table_flow_entry(dpid, L2_REWRITE_TABLE_ID, L2_FORWARDING_TABLE_ID)
   end
 
   def init_l2_forwarding_flow_entry(dpid)
@@ -374,36 +320,15 @@ class SimpleRouter < Trema::Controller
   end
 
   def init_l3_rewrite_flow_entry(dpid)
-    send_flow_mod_add(
-      dpid,
-      table_id: L3_REWRITE_TABLE_ID,
-      idle_timeout: 0,
-      priority: 0,
-      match: Match.new,
-      instructions: GotoTable.new(L3_ROUTING_TABLE_ID),
-    )
+    add_goto_table_flow_entry(dpid, L3_REWRITE_TABLE_ID, L3_ROUTING_TABLE_ID)
   end
 
   def init_l3_routing_flow_entry(dpid)
-    send_flow_mod_add(
-      dpid,
-      table_id: L3_ROUTING_TABLE_ID,
-      idle_timeout: 0,
-      priority: 0,
-      match: Match.new,
-      instructions: GotoTable.new(L3_FORWARDING_TABLE_ID),
-    )
+    add_goto_table_flow_entry(dpid, L3_ROUTING_TABLE_ID, L3_FORWARDING_TABLE_ID)
   end
 
   def init_l3_forwarding_flow_entry(dpid)
-    send_flow_mod_add(
-      dpid,
-      table_id: L3_FORWARDING_TABLE_ID,
-      idle_timeout: 0,
-      priority: 0,
-      match: Match.new,
-      instructions: GotoTable.new(L2_REWRITE_TABLE_ID),
-    )
+    add_goto_table_flow_entry(dpid, L3_FORWARDING_TABLE_ID, L2_REWRITE_TABLE_ID)
   end
 
   def add_l3_rewrite_flow_entry(dpid, message)
@@ -416,6 +341,17 @@ class SimpleRouter < Trema::Controller
 
   def add_l3_forwarding_flow_entry(dpid, message)
 
+  end
+
+  def add_goto_table_flow_entry(dpid, from_id, to_id)
+    send_flow_mod_add(
+      dpid,
+      table_id: from_id,
+      idle_timeout: 0,
+      priority: 0,
+      match: Match.new,
+      instructions: GotoTable.new(to_id),
+    )
   end
 end
 # rubocop:enable ClassLength
