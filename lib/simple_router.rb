@@ -5,14 +5,12 @@ require 'routing_table'
 # Simple implementation of L3 switch in OpenFlow1.0
 # rubocop:disable ClassLength
 class SimpleRouter < Trema::Controller
-  CLASSIFIER_TABLE_ID    = 0
-  # IDの小さいテーブルには遷移できないのでIDを 105 -> 2 に変更
-  ARP_RESPONDER_TABLE_ID = 2
-  L3_REWRITE_TABLE_ID    = 5
-  L3_ROUTING_TABLE_ID    = 10
-  L3_FORWARDING_TABLE_ID = 15
-  L2_REWRITE_TABLE_ID    = 20
-  L2_FORWARDING_TABLE_ID = 25
+  CLASSIFIER_TABLE_ID       = 0
+  ARP_RESPONDER_TABLE_ID    = 2
+  ROUTING_TABLE_ID          = 3
+  INTERFACE_LOOKUP_TABLE_ID = 4
+  ARP_LOOKUP_TABLE_ID       = 5
+  PACKET_OUT_TABLE_ID       = 6
 
   ETH_IPv4        = 0x0800
   ETH_ARP         = 0x0806
@@ -27,12 +25,22 @@ class SimpleRouter < Trema::Controller
   end
 
   def switch_ready(dpid)
+    puts Configuration::INTERFACES 
+
+    init_classifier_flow_entry(dpid)
+    init_arp_responder_flow_entry(dpid, Configuration::INTERFACES)
+    #init_routing_flow_entry(dpid, Configuration::INTERFACES)
+    #init_arp_flow_entry(dpid)
+    #init_packet_out_flow_entry(dpid)
+
+=begin
     send_flow_mod_delete(dpid, match: Match.new)
+
+    add_goto_table_flow_entry(dpid, START_TABLE_ID, CLASSIFIER_TABLE_ID)
 
     # init classifier table
     add_arppacket_flow_entry(dpid)
     add_ipv4packet_rewrite_flow_entry(dpid)
-    add_other_flow_entry(dpid)
 
     # initialize flow entry
     init_arp_flow_entry(dpid)
@@ -43,6 +51,83 @@ class SimpleRouter < Trema::Controller
     init_l3_rewrite_flow_entry(dpid)
     init_l3_routing_flow_entry(dpid)
     init_l3_forwarding_flow_entry(dpid)
+=end
+  end
+
+  def init_classifier_flow_entry(dpid)
+    send_flow_mod_add(
+      dpid,
+      table_id: CLASSIFIER_TABLE_ID,
+      idle_timeout: 0,
+      priority: 0,
+      match: Match.new(ether_type: ETH_IPv4),
+      instructions: GotoTable.new(ROUTING_TABLE_ID)
+    )
+    send_flow_mod_add(
+      dpid,
+      table_id: CLASSIFIER_TABLE_ID,
+      idle_timeout: 0,
+      priority: 0,
+      match: Match.new(ether_type: ETH_ARP),
+      instructions: GotoTable.new(ARP_RESPONDER_TABLE_ID)
+    )
+  end
+
+  def init_arp_responder_flow_entry(dpid, interfaces_conf = [])
+    interfaces_conf.map do |each|
+      instructions = [
+          NiciraRegMove.new(
+            from: :source_mac_address,
+            to: :destination_mac_address
+          ),
+          NiciraRegMove.new(
+            from: :arp_sender_protocol_address,
+            to: :arp_target_protocol_address
+          ),
+          NiciraRegMove.new(
+            from: :arp_sender_hardware_address,
+            to: :arp_target_hardware_address
+          ),
+          SetArpOperation.new(Arp::Reply::OPERATION),
+          SetArpSenderHardwareAddress.new(each.fetch(:mac_address)),
+          SetArpSenderProtocolAddress.new(each.fetch(:ip_address)),
+          SetSourceMacAddress.new(each.fetch(:mac_address)),
+          SendOutPort.new((671.to_s(36)+"_"+1198505.to_s(36)).to_sym),
+        ]
+      send_flow_mod_add(
+        dpid,
+        table_id: ARP_RESPONDER_TABLE_ID,
+        idle_timeout: 0,
+        priority: 0,
+        match: Match.new(
+          ether_type: ETH_ARP,
+          in_port: each.fetch(:port),
+          arp_target_protocol_address: each.fetch(:ip_address),
+          arp_operation: Arp::Request::OPERATION,
+        ),
+        instructions: [
+          Apply.new(instructions),
+        ]
+      )
+
+      send_flow_mod_add(
+        dpid,
+        table_id: ARP_RESPONDER_TABLE_ID,
+        idle_timeout: 0,
+        priority: 0,
+        match: Match.new(
+          ether_type: ETH_ARP,
+          in_port: each.fetch(:port),
+          arp_target_protocol_address: each.fetch(:ip_address),
+          arp_operation: Arp::Reply::OPERATION,
+        ),
+        instructions: [
+          Apply.new([
+            SendOutPort.new(:controller)
+          ]),
+        ]
+      )
+    end
   end
 
   # rubocop:disable MethodLength
@@ -260,9 +345,9 @@ class SimpleRouter < Trema::Controller
       dpid,
       table_id: CLASSIFIER_TABLE_ID,
       idle_timeout: 0,
-      priority: 1,
+      priority: 0,
       match: Match.new(ether_type: ETH_IPv4),
-      instructions: GotoTable.new(L3_REWRITE_TABLE_ID)
+      instructions: GotoTable.new(NAZO_3_TABLE_ID)
     )
   end
 
@@ -271,10 +356,9 @@ class SimpleRouter < Trema::Controller
       dpid,
       table_id: CLASSIFIER_TABLE_ID,
       idle_timeout: 0,
-      priority: 2,
+      priority: 0,
       match: Match.new(
         ether_type: ETH_ARP,
-        arp_operation: Arp::Request::OPERATION,
       ),
       instructions: GotoTable.new(ARP_RESPONDER_TABLE_ID)
     )
