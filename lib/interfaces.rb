@@ -39,4 +39,8 @@ class Interfaces
       each.ip_address.mask(netmask_length) == ip_address.mask(netmask_length)
     end
   end
+
+  def get_list()
+    @list
+  end
 end
