@@ -25,13 +25,12 @@ class SimpleRouter < Trema::Controller
   end
 
   def switch_ready(dpid)
-    puts Configuration::INTERFACES 
     init_classifier_flow_entry(dpid)
     init_arp_responder_flow_entry(dpid, Configuration::INTERFACES)
     init_routing_flow_entry(dpid, Configuration::INTERFACES)
     init_interface_lookup_flow_entry(dpid, Configuration::INTERFACES)
     init_arp_lookup_flow_entry(dpid)
-    #init_packet_out_flow_entry(dpid)
+    init_packet_out_flow_entry(dpid)
 
 =begin
     send_flow_mod_delete(dpid, match: Match.new)
@@ -183,18 +182,33 @@ class SimpleRouter < Trema::Controller
   end
 
   def init_arp_lookup_flow_entry(dpid)
-      send_flow_mod_add(
-        dpid,
-        table_id: ARP_LOOKUP_TABLE_ID,
-        idle_timeout: 0,
-        priority: 0,
-        match: Match.new,
-        instructions: [
-          Apply.new([
-            SendOutPort.new(:controller),
-          ]),
-        ]
-      )
+    send_flow_mod_add(
+      dpid,
+      table_id: ARP_LOOKUP_TABLE_ID,
+      idle_timeout: 0,
+      priority: 0,
+      match: Match.new,
+      instructions: [
+        Apply.new([
+          SendOutPort.new(:controller),
+        ]),
+      ]
+    )
+  end
+
+  def init_packet_out_flow_entry(dpid)
+    send_flow_mod_add(
+      dpid,
+      table_id: PACKET_OUT_TABLE_ID,
+      idle_timeout: 0,
+      priority: 0,
+      match: Match.new,
+      instructions: [
+        Apply.new([
+          NiciraSendOutPort.new(:reg1),
+        ]),
+      ]
+    )
   end
 
   # rubocop:disable MethodLength
