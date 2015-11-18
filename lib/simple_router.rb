@@ -29,7 +29,8 @@ class SimpleRouter < Trema::Controller
     init_classifier_flow_entry(dpid)
     init_arp_responder_flow_entry(dpid, Configuration::INTERFACES)
     init_routing_flow_entry(dpid, Configuration::INTERFACES)
-    #init_arp_flow_entry(dpid)
+    init_interface_lookup_flow_entry(dpid, Configuration::INTERFACES)
+    init_arp_lookup_flow_entry(dpid)
     #init_packet_out_flow_entry(dpid)
 
 =begin
@@ -153,7 +154,47 @@ class SimpleRouter < Trema::Controller
         ]
       )
     end
+  end
 
+  def init_interface_lookup_flow_entry(dpid, interfaces_conf)
+    interfaces_conf.map do |each|
+      ip_mask = get_mask(each.fetch(:netmask_length))
+      send_flow_mod_add(
+        dpid,
+        table_id: INTERFACE_LOOKUP_TABLE_ID,
+        idle_timeout: 0,
+        priority: 0,
+        match: Match.new(
+          reg0: IPv4Address.new(each.fetch(:ip_address)).to_i & ip_mask,
+          reg0_mask: ip_mask,
+        ),
+        instructions: [
+          Apply.new([
+            NiciraRegLoad.new(
+              each.fetch(:port), 
+              :reg1
+            ),
+            SetSourceMacAddress.new(each.fetch(:mac_address)),
+          ]),
+	  GotoTable.new(ARP_LOOKUP_TABLE_ID),
+        ]
+      )
+    end
+  end
+
+  def init_arp_lookup_flow_entry(dpid)
+      send_flow_mod_add(
+        dpid,
+        table_id: ARP_LOOKUP_TABLE_ID,
+        idle_timeout: 0,
+        priority: 0,
+        match: Match.new,
+        instructions: [
+          Apply.new([
+            SendOutPort.new(:controller),
+          ]),
+        ]
+      )
   end
 
   # rubocop:disable MethodLength
