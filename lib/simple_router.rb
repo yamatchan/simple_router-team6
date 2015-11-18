@@ -8,8 +8,10 @@ class SimpleRouter < Trema::Controller
   ARP_LOOKUP_TABLE_ID       = 5
   PACKET_OUT_TABLE_ID       = 6
 
-  ETH_IPv4        = 0x0800
-  ETH_ARP         = 0x0806
+  ETH_IPv4 = 0x0800
+  ETH_ARP  = 0x0806
+
+  MASK32 = 0xFFFFFFFF
 
   def start(_args)
     load File.join(__dir__, '..', 'simple_router.conf')
@@ -20,9 +22,9 @@ class SimpleRouter < Trema::Controller
 
   def switch_ready(dpid)
     init_classifier_flow_entry(dpid)
-    init_arp_responder_flow_entry(dpid, Configuration::INTERFACES)
-    init_routing_flow_entry(dpid, Configuration::INTERFACES)
-    init_interface_lookup_flow_entry(dpid, Configuration::INTERFACES)
+    init_arp_responder_flow_entry(dpid)
+    init_routing_flow_entry(dpid)
+    init_interface_lookup_flow_entry(dpid)
     init_arp_lookup_flow_entry(dpid)
     init_packet_out_flow_entry(dpid)
   end
@@ -49,6 +51,7 @@ class SimpleRouter < Trema::Controller
   end
 
   private
+
   def sent_to_router?(message)
     return true if message.destination_mac.broadcast?
     interface = @interfaces.find_by(port_number: message.in_port)
@@ -58,7 +61,7 @@ class SimpleRouter < Trema::Controller
   def packet_in_arp_reply(dpid, message)
     flush_unsent_packets(dpid,
                          message.data.sender_protocol_address,
-                         )
+    )
   end
 
   def flush_unsent_packets(dpid, destination_ip)
@@ -103,7 +106,6 @@ class SimpleRouter < Trema::Controller
   end
 
   def send_arp_request(dpid, destination_ip, interface)
-    logger.info "called send_arp_request"
     arp_request =
       Arp::Request.new(source_mac: interface.mac_address,
                        sender_protocol_address: interface.ip_address,
@@ -130,105 +132,103 @@ class SimpleRouter < Trema::Controller
                     echo_data: icmp_request.echo_data)
   end
 
-  def add_goto_table_flow_entry(dpid, from_id, to_id)
+  def add_goto_table_flow_entry(dpid, from_id, to_id, match = Match.new)
     send_flow_mod_add(
       dpid,
       table_id: from_id,
-      idle_timeout: 0,
       priority: 0,
-      match: Match.new,
+      match: match,
       instructions: GotoTable.new(to_id),
     )
   end
 
   def init_classifier_flow_entry(dpid)
-    send_flow_mod_add(
-      dpid,
-      table_id: CLASSIFIER_TABLE_ID,
-      idle_timeout: 0,
-      priority: 0,
-      match: Match.new(ether_type: ETH_IPv4),
-      instructions: GotoTable.new(ROUTING_TABLE_ID)
+    add_goto_table_flow_entry(dpid,
+                              CLASSIFIER_TABLE_ID,
+                              ROUTING_TABLE_ID,
+                              Match.new(ether_type: ETH_IPv4)
     )
-    send_flow_mod_add(
-      dpid,
-      table_id: CLASSIFIER_TABLE_ID,
-      idle_timeout: 0,
-      priority: 0,
-      match: Match.new(ether_type: ETH_ARP),
-      instructions: GotoTable.new(ARP_RESPONDER_TABLE_ID)
+
+    add_goto_table_flow_entry(dpid,
+                              CLASSIFIER_TABLE_ID,
+                              ARP_RESPONDER_TABLE_ID,
+                              Match.new(ether_type: ETH_ARP)
     )
   end
 
-  def init_arp_responder_flow_entry(dpid, interfaces_conf = [])
-    interfaces_conf.map do |each|
-      instructions = [
-          NiciraRegMove.new(
-            from: :source_mac_address,
-            to: :destination_mac_address
-          ),
-          NiciraRegMove.new(
-            from: :arp_sender_protocol_address,
-            to: :arp_target_protocol_address
-          ),
-          NiciraRegMove.new(
-            from: :arp_sender_hardware_address,
-            to: :arp_target_hardware_address
-          ),
-          SetArpOperation.new(Arp::Reply::OPERATION),
-          SetArpSenderHardwareAddress.new(each.fetch(:mac_address)),
-          SetArpSenderProtocolAddress.new(each.fetch(:ip_address)),
-          SetSourceMacAddress.new(each.fetch(:mac_address)),
-          SendOutPort.new((671.to_s(36)+"_"+1198505.to_s(36)).to_sym),
-        ]
-      send_flow_mod_add(
-        dpid,
-        table_id: ARP_RESPONDER_TABLE_ID,
-        idle_timeout: 0,
-        priority: 0,
-        match: Match.new(
-          ether_type: ETH_ARP,
-          in_port: each.fetch(:port),
-          arp_target_protocol_address: each.fetch(:ip_address),
-          arp_operation: Arp::Request::OPERATION,
-        ),
-        instructions: [
-          Apply.new(instructions),
-        ]
-      )
-
-      send_flow_mod_add(
-        dpid,
-        table_id: ARP_RESPONDER_TABLE_ID,
-        idle_timeout: 0,
-        priority: 0,
-        match: Match.new(
-          ether_type: ETH_ARP,
-          in_port: each.fetch(:port),
-          arp_target_protocol_address: each.fetch(:ip_address),
-          arp_operation: Arp::Reply::OPERATION,
-        ),
-        instructions: [
-          Apply.new([
-            SendOutPort.new(:controller)
-          ]),
-        ]
-      )
+  def init_arp_responder_flow_entry(dpid)
+    @interfaces.get_list.each do |each|
+      add_arp_request_flow_entry(dpid, each)
+      add_arp_reply_flow_entry(dpid, each)
     end
   end
 
-  def init_routing_flow_entry(dpid, interfaces_conf)
-    interfaces_conf.map do |each|
-      ip_mask = gen_mask(each.fetch(:netmask_length))
+  def add_arp_request_flow_entry(dpid, interface)
+    instructions = [
+      NiciraRegMove.new(
+        from: :source_mac_address,
+        to: :destination_mac_address
+      ),
+      NiciraRegMove.new(
+        from: :arp_sender_protocol_address,
+        to: :arp_target_protocol_address
+      ),
+      NiciraRegMove.new(
+        from: :arp_sender_hardware_address,
+        to: :arp_target_hardware_address
+      ),
+      SetArpOperation.new(Arp::Reply::OPERATION),
+      SetArpSenderHardwareAddress.new(interface.mac_address),
+      SetArpSenderProtocolAddress.new(interface.ip_address),
+      SetSourceMacAddress.new(interface.mac_address),
+      SendOutPort.new((671.to_s(36)+"_"+1198505.to_s(36)).to_sym),
+    ]
+
+    send_flow_mod_add(
+      dpid,
+      table_id: ARP_RESPONDER_TABLE_ID,
+      priority: 0,
+      match: Match.new(
+        ether_type: ETH_ARP,
+        in_port: interface.port_number,
+        arp_target_protocol_address: interface.ip_address,
+        arp_operation: Arp::Request::OPERATION,
+      ),
+      instructions: [
+        Apply.new(instructions),
+      ]
+    )
+  end
+
+  def add_arp_reply_flow_entry(dpid, interface)
+    send_flow_mod_add(
+      dpid,
+      table_id: ARP_RESPONDER_TABLE_ID,
+      priority: 0,
+      match: Match.new(
+        ether_type: ETH_ARP,
+        in_port: interface.port_number,
+        arp_target_protocol_address: interface.ip_address,
+        arp_operation: Arp::Reply::OPERATION,
+      ),
+      instructions: [
+        Apply.new([
+          SendOutPort.new(:controller)
+        ]),
+      ]
+    )
+  end
+
+  def init_routing_flow_entry(dpid)
+    @interfaces.get_list.each do |each|
       send_flow_mod_add(
         dpid,
         table_id: ROUTING_TABLE_ID,
-        idle_timeout: 0,
         priority: 1,
         match: Match.new(
           ether_type: ETH_IPv4,
-          ipv4_destination_address: IPv4Address.new(each.fetch(:ip_address)).to_i & ip_mask,
-          ipv4_destination_address_mask: ip_mask,
+          ipv4_destination_address: each.ip_address.mask(each.netmask_length),
+          ipv4_destination_address_mask: gen_mask(each.netmask_length),
         ),
         instructions: [
           Apply.new([
@@ -244,11 +244,10 @@ class SimpleRouter < Trema::Controller
       send_flow_mod_add(
         dpid,
         table_id: ROUTING_TABLE_ID,
-        idle_timeout: 0,
         priority: 4545,
         match: Match.new(
           ether_type: ETH_IPv4,
-          ipv4_destination_address: each.fetch(:ip_address),
+          ipv4_destination_address: each.ip_address,
         ),
         instructions: [
           Apply.new([
@@ -259,25 +258,23 @@ class SimpleRouter < Trema::Controller
     end
   end
 
-  def init_interface_lookup_flow_entry(dpid, interfaces_conf)
-    interfaces_conf.map do |each|
-      ip_mask = gen_mask(each.fetch(:netmask_length))
+  def init_interface_lookup_flow_entry(dpid)
+    @interfaces.get_list.each do |each|
       send_flow_mod_add(
         dpid,
         table_id: INTERFACE_LOOKUP_TABLE_ID,
-        idle_timeout: 0,
         priority: 0,
         match: Match.new(
-          reg0: IPv4Address.new(each.fetch(:ip_address)).to_i & ip_mask,
-          reg0_mask: ip_mask,
+          reg0: each.ip_address.mask(each.netmask_length).to_i,
+          reg0_mask: gen_mask(each.netmask_length).to_i,
         ),
         instructions: [
           Apply.new([
             NiciraRegLoad.new(
-              each.fetch(:port), 
+              each.port_number,
               :reg1
             ),
-            SetSourceMacAddress.new(each.fetch(:mac_address)),
+            SetSourceMacAddress.new(each.mac_address),
           ]),
 	  GotoTable.new(ARP_LOOKUP_TABLE_ID),
         ]
@@ -289,7 +286,6 @@ class SimpleRouter < Trema::Controller
     send_flow_mod_add(
       dpid,
       table_id: ARP_LOOKUP_TABLE_ID,
-      idle_timeout: 0,
       priority: 0,
       match: Match.new,
       instructions: [
@@ -304,7 +300,6 @@ class SimpleRouter < Trema::Controller
     send_flow_mod_add(
       dpid,
       table_id: PACKET_OUT_TABLE_ID,
-      idle_timeout: 0,
       priority: 0,
       match: Match.new,
       instructions: [
@@ -319,7 +314,6 @@ class SimpleRouter < Trema::Controller
     send_flow_mod_add(
       dpid,
       table_id: ARP_LOOKUP_TABLE_ID,
-      idle_timeout: 0,
       priority: 4545,
       match: Match.new(
         reg0: message.sender_protocol_address.to_i,
@@ -334,10 +328,6 @@ class SimpleRouter < Trema::Controller
   end
 
   def gen_mask(len)
-    mask = 0
-    ((32-len)..31).each{ |p|
-      mask |= 1 << p
-    }
-    mask
+    IPv4Address.new(MASK32).mask(len)
   end
 end
