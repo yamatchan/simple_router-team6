@@ -26,10 +26,9 @@ class SimpleRouter < Trema::Controller
 
   def switch_ready(dpid)
     puts Configuration::INTERFACES 
-
     init_classifier_flow_entry(dpid)
     init_arp_responder_flow_entry(dpid, Configuration::INTERFACES)
-    #init_routing_flow_entry(dpid, Configuration::INTERFACES)
+    init_routing_flow_entry(dpid, Configuration::INTERFACES)
     #init_arp_flow_entry(dpid)
     #init_packet_out_flow_entry(dpid)
 
@@ -128,6 +127,33 @@ class SimpleRouter < Trema::Controller
         ]
       )
     end
+  end
+
+  def init_routing_flow_entry(dpid, interfaces_conf)
+    interfaces_conf.map do |each|
+      ip_mask = get_mask(each.fetch(:netmask_length))
+      send_flow_mod_add(
+        dpid,
+        table_id: ROUTING_TABLE_ID,
+        idle_timeout: 0,
+        priority: 1,
+        match: Match.new(
+          ether_type: ETH_IPv4,
+          ipv4_destination_address: IPv4Address.new(each.fetch(:ip_address)).to_i & ip_mask,
+          ipv4_destination_address_mask: ip_mask,
+        ),
+        instructions: [
+          Apply.new([
+            NiciraRegMove.new(
+              from: :ipv4_destination_address,
+              to: :reg0
+            ),
+          ]),
+	  GotoTable.new(INTERFACE_LOOKUP_TABLE_ID),
+        ]
+      )
+    end
+
   end
 
   # rubocop:disable MethodLength
@@ -436,6 +462,14 @@ class SimpleRouter < Trema::Controller
       match: Match.new,
       instructions: GotoTable.new(to_id),
     )
+  end
+
+  def get_mask(len)
+    mask = 0
+    ((32-len)..31).each{ |p|
+      mask |= 1 << p
+    }
+    mask
   end
 end
 # rubocop:enable ClassLength
