@@ -1,4 +1,5 @@
 require 'interfaces'
+require 'routing_table'
 
 class SimpleRouter < Trema::Controller
   CLASSIFIER_TABLE_ID       = 0
@@ -16,6 +17,7 @@ class SimpleRouter < Trema::Controller
   def start(_args)
     load File.join(__dir__, '..', 'simple_router.conf')
     @interfaces = Interfaces.new(Configuration::INTERFACES)
+    @routing_table = RoutingTable.new(Configuration::ROUTES)
     @unresolved_packet_queue = Hash.new { [] }
     logger.info "#{name} started."
   end
@@ -233,42 +235,69 @@ class SimpleRouter < Trema::Controller
   end
 
   def init_routing_flow_entry(dpid)
-    @interfaces.get_list.each do |each|
-      send_flow_mod_add(
-        dpid,
-        table_id: ROUTING_TABLE_ID,
-        priority: 1,
-        match: Match.new(
-          ether_type: ETH_IPv4,
-          ipv4_destination_address: each.ip_address.mask(each.netmask_length),
-          ipv4_destination_address_mask: gen_mask(each.netmask_length),
-        ),
-        instructions: [
-          Apply.new([
-            NiciraRegMove.new(
-              from: :ipv4_destination_address,
-              to: :reg0,
-            ),
-          ]),
-          GotoTable.new(INTERFACE_LOOKUP_TABLE_ID),
-        ],
-      )
-
-      send_flow_mod_add(
-        dpid,
-        table_id: ROUTING_TABLE_ID,
-        priority: 4545,
-        match: Match.new(
-          ether_type: ETH_IPv4,
-          ipv4_destination_address: each.ip_address,
-        ),
-        instructions: [
-          Apply.new([
-            SendOutPort.new(:controller)
-          ]),
-        ],
-      )
+    add_default_routing_flow_entry(dpid)
+    @interfaces.get_list.each do |interface|
+      add_transfer_routing_flow_entry(dpid, interface)
+      add_interface_routing_flow_entry(dpid, interface)
     end
+  end
+
+  def add_interface_routing_flow_entry(dpid, interface)
+    send_flow_mod_add(
+      dpid,
+      table_id: ROUTING_TABLE_ID,
+      priority: 4545,
+      match: Match.new(
+        ether_type: ETH_IPv4,
+        ipv4_destination_address: interface.ip_address,
+      ),
+      instructions: [
+        Apply.new([
+          SendOutPort.new(:controller)
+        ]),
+      ],
+    )
+  end
+
+  def add_transfer_routing_flow_entry(dpid, interface)
+    send_flow_mod_add(
+      dpid,
+      table_id: ROUTING_TABLE_ID,
+      priority: 1,
+      match: Match.new(
+        ether_type: ETH_IPv4,
+        ipv4_destination_address: interface.ip_address.mask(interface.netmask_length),
+        ipv4_destination_address_mask: gen_mask(interface.netmask_length),
+      ),
+      instructions: [
+        Apply.new([
+          NiciraRegMove.new(
+            from: :ipv4_destination_address,
+            to: :reg0,
+          ),
+        ]),
+        GotoTable.new(INTERFACE_LOOKUP_TABLE_ID),
+      ],
+    )
+  end
+
+  def add_default_routing_flow_entry(dpid)
+    default_route = @routing_table.get_default_route
+    send_flow_mod_add(
+      dpid,
+      table_id: ROUTING_TABLE_ID,
+      priority: 0,
+      match: Match.new,
+      instructions: [
+        Apply.new([
+          NiciraRegLoad.new(
+            default_route.to_i,
+            :reg0,
+          )
+        ]),
+        GotoTable.new(INTERFACE_LOOKUP_TABLE_ID),
+      ],
+    )
   end
 
   def init_interface_lookup_flow_entry(dpid)
