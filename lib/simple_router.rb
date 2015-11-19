@@ -196,7 +196,7 @@ class SimpleRouter < Trema::Controller
       SetArpSenderHardwareAddress.new(interface.mac_address),
       SetArpSenderProtocolAddress.new(interface.ip_address),
       SetSourceMacAddress.new(interface.mac_address),
-      SendOutPort.new((671.to_s(36)+"_"+1198505.to_s(36)).to_sym),
+      SendOutPort.new(:in_port),
     ]
 
     send_flow_mod_add(
@@ -314,12 +314,12 @@ class SimpleRouter < Trema::Controller
           Apply.new([
             NiciraRegLoad.new(
               each.port_number,
-              :reg1
+              :reg1,
             ),
             SetSourceMacAddress.new(each.mac_address),
           ]),
           GotoTable.new(ARP_LOOKUP_TABLE_ID),
-        ]
+        ],
       )
     end
   end
@@ -334,7 +334,7 @@ class SimpleRouter < Trema::Controller
         Apply.new([
           SendOutPort.new(:controller),
         ]),
-      ]
+      ],
     )
   end
 
@@ -348,7 +348,7 @@ class SimpleRouter < Trema::Controller
         Apply.new([
           NiciraSendOutPort.new(:reg1),
         ]),
-      ]
+      ],
     )
   end
 
@@ -365,7 +365,7 @@ class SimpleRouter < Trema::Controller
           SetDestinationMacAddress.new(message.sender_hardware_address),
         ]),
         GotoTable.new(PACKET_OUT_TABLE_ID),
-      ]
+      ],
     )
   end
 
