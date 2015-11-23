@@ -3,11 +3,11 @@ require 'routing_table'
 
 class SimpleRouter < Trema::Controller
   CLASSIFIER_TABLE_ID       = 0
-  ARP_RESPONDER_TABLE_ID    = 2
-  ROUTING_TABLE_ID          = 3
-  INTERFACE_LOOKUP_TABLE_ID = 4
-  ARP_LOOKUP_TABLE_ID       = 5
-  PACKET_OUT_TABLE_ID       = 6
+  ARP_RESPONDER_TABLE_ID    = 1
+  ROUTING_TABLE_ID          = 2
+  INTERFACE_LOOKUP_TABLE_ID = 3
+  ARP_LOOKUP_TABLE_ID       = 4
+  EGRESS_TABLE_ID           = 5
 
   ETH_IPv4 = 0x0800
   ETH_ARP  = 0x0806
@@ -28,7 +28,7 @@ class SimpleRouter < Trema::Controller
     init_routing_flow_entry(dpid)
     init_interface_lookup_flow_entry(dpid)
     init_arp_lookup_flow_entry(dpid)
-    init_packet_out_flow_entry(dpid)
+    init_egress_flow_entry(dpid)
   end
 
   def packet_in(dpid, message)
@@ -105,10 +105,6 @@ class SimpleRouter < Trema::Controller
     send_arp_request(dpid, destination_ip, interface)
   end
 
-  def resolve_next_hop(destination_ip_address)
-    @interfaces.find_by_prefix(destination_ip_address)
-  end
-
   def send_arp_request(dpid, destination_ip, interface)
     arp_request =
       Arp::Request.new(
@@ -119,7 +115,10 @@ class SimpleRouter < Trema::Controller
     send_packet_out(
       dpid,
       raw_data: arp_request.to_binary,
-      actions: SendOutPort.new(interface.port_number),
+      actions: [
+        NiciraRegLoad.new(interface.port_number, :reg1),
+        SendOutPort.new(:table),
+      ]
     )
   end
 
@@ -174,6 +173,7 @@ class SimpleRouter < Trema::Controller
     @interfaces.get_list.each do |each|
       add_arp_request_flow_entry(dpid, each)
       add_arp_reply_flow_entry(dpid, each)
+      add_sending_arp_request_flow_entry(dpid, each)
     end
   end
 
@@ -202,7 +202,7 @@ class SimpleRouter < Trema::Controller
     send_flow_mod_add(
       dpid,
       table_id: ARP_RESPONDER_TABLE_ID,
-      priority: 0,
+      priority: 1,
       match: Match.new(
         ether_type: ETH_ARP,
         in_port: interface.port_number,
@@ -219,7 +219,7 @@ class SimpleRouter < Trema::Controller
     send_flow_mod_add(
       dpid,
       table_id: ARP_RESPONDER_TABLE_ID,
-      priority: 0,
+      priority: 1,
       match: Match.new(
         ether_type: ETH_ARP,
         in_port: interface.port_number,
@@ -234,51 +234,32 @@ class SimpleRouter < Trema::Controller
     )
   end
 
+  def add_sending_arp_request_flow_entry(dpid, interface)
+    send_flow_mod_add(
+      dpid,
+      table_id: ARP_RESPONDER_TABLE_ID,
+      priority: 0,
+      match: Match.new(
+        ether_type: ETH_ARP,
+        reg1: interface.port_number,
+      ),
+      instructions: [
+        Apply.new([
+          SetArpSenderHardwareAddress.new(interface.mac_address),
+          SetArpSenderProtocolAddress.new(interface.ip_address),
+          SetSourceMacAddress.new(interface.mac_address),
+        ]),
+        GotoTable.new(EGRESS_TABLE_ID),
+      ],
+    )
+  end
+
   def init_routing_flow_entry(dpid)
     add_default_routing_flow_entry(dpid)
     @interfaces.get_list.each do |interface|
       add_transfer_routing_flow_entry(dpid, interface)
       add_interface_routing_flow_entry(dpid, interface)
     end
-  end
-
-  def add_interface_routing_flow_entry(dpid, interface)
-    send_flow_mod_add(
-      dpid,
-      table_id: ROUTING_TABLE_ID,
-      priority: 4545,
-      match: Match.new(
-        ether_type: ETH_IPv4,
-        ipv4_destination_address: interface.ip_address,
-      ),
-      instructions: [
-        Apply.new([
-          SendOutPort.new(:controller)
-        ]),
-      ],
-    )
-  end
-
-  def add_transfer_routing_flow_entry(dpid, interface)
-    send_flow_mod_add(
-      dpid,
-      table_id: ROUTING_TABLE_ID,
-      priority: 1,
-      match: Match.new(
-        ether_type: ETH_IPv4,
-        ipv4_destination_address: interface.ip_address.mask(interface.netmask_length),
-        ipv4_destination_address_mask: gen_mask(interface.netmask_length),
-      ),
-      instructions: [
-        Apply.new([
-          NiciraRegMove.new(
-            from: :ipv4_destination_address,
-            to: :reg0,
-          ),
-        ]),
-        GotoTable.new(INTERFACE_LOOKUP_TABLE_ID),
-      ],
-    )
   end
 
   def add_default_routing_flow_entry(dpid)
@@ -300,12 +281,51 @@ class SimpleRouter < Trema::Controller
     )
   end
 
+  def add_transfer_routing_flow_entry(dpid, interface)
+    send_flow_mod_add(
+      dpid,
+      table_id: ROUTING_TABLE_ID,
+      priority: interface.netmask_length,
+      match: Match.new(
+        ether_type: ETH_IPv4,
+        ipv4_destination_address: interface.ip_address.mask(interface.netmask_length),
+        ipv4_destination_address_mask: gen_mask(interface.netmask_length),
+      ),
+      instructions: [
+        Apply.new([
+          NiciraRegMove.new(
+            from: :ipv4_destination_address,
+            to: :reg0,
+          ),
+        ]),
+        GotoTable.new(INTERFACE_LOOKUP_TABLE_ID),
+      ],
+    )
+  end
+
+  def add_interface_routing_flow_entry(dpid, interface)
+    send_flow_mod_add(
+      dpid,
+      table_id: ROUTING_TABLE_ID,
+      priority: 4545,
+      match: Match.new(
+        ether_type: ETH_IPv4,
+        ipv4_destination_address: interface.ip_address,
+      ),
+      instructions: [
+        Apply.new([
+          SendOutPort.new(:controller)
+        ]),
+      ],
+    )
+  end
+
   def init_interface_lookup_flow_entry(dpid)
     @interfaces.get_list.each do |each|
       send_flow_mod_add(
         dpid,
         table_id: INTERFACE_LOOKUP_TABLE_ID,
-        priority: 0,
+        priority: each.netmask_length,
         match: Match.new(
           reg0: each.ip_address.mask(each.netmask_length).to_i,
           reg0_mask: gen_mask(each.netmask_length).to_i,
@@ -338,10 +358,10 @@ class SimpleRouter < Trema::Controller
     )
   end
 
-  def init_packet_out_flow_entry(dpid)
+  def init_egress_flow_entry(dpid)
     send_flow_mod_add(
       dpid,
-      table_id: PACKET_OUT_TABLE_ID,
+      table_id: EGRESS_TABLE_ID,
       priority: 0,
       match: Match.new,
       instructions: [
@@ -364,7 +384,7 @@ class SimpleRouter < Trema::Controller
         Apply.new([
           SetDestinationMacAddress.new(message.sender_hardware_address),
         ]),
-        GotoTable.new(PACKET_OUT_TABLE_ID),
+        GotoTable.new(EGRESS_TABLE_ID),
       ],
     )
   end
