@@ -25,4 +25,8 @@ class RoutingTable
     end
     nil
   end
+
+  def get_default_route()
+    @db[0][0]
+  end
 end
